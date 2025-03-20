@@ -2,14 +2,29 @@ import aiohttp
 import asyncio
 import pandas as pd
 from bs4 import BeautifulSoup as bs
-
-BASE_URL = "https://www.airlinequality.com/airline-reviews/british-airways/page/{}/"
+import math
+import time
 
 async def fetch_page(session, url):
     """Fetches a webpage asynchronously."""
     async with session.get(url) as response:
         return await response.text()
+
+async def async_fetch_all_pages(fetch_function, BASE_URL, total_pages, *args):
+    """
+    Generic function to fetch data asynchronously from multiple pages.
     
+    :param fetch_function: Function to call (either extract_columns or extract_reviews).
+    :param BASE_URL: The URL template for requests.
+    :param total_pages: Number of pages to scrape.
+    :param args: Additional arguments required by the fetch function.
+    """
+    async with aiohttp.ClientSession() as session:
+        tasks = [fetch_function(session, BASE_URL.format(i), *args) for i in range(1, total_pages + 1)]
+        results = await asyncio.gather(*tasks)  # Fetch all pages concurrently
+
+    return results
+
 async def extract_column_names_from_page(session, url):
     """Extracts column names from a single page."""
     html = await fetch_page(session, url)
@@ -27,18 +42,6 @@ async def extract_column_names_from_page(session, url):
 
     return columns
 
-async def extract_all_column_names(total_pages=393):
-    """Extracts column names from all pages."""
-    async with aiohttp.ClientSession() as session:
-        tasks = [extract_column_names_from_page(session, BASE_URL.format(i)) for i in range(1, total_pages + 1)]
-        all_columns_per_page = await asyncio.gather(*tasks)  # Run all page extractions concurrently
-
-    # Finding common and unique columns across all pages
-    all_columns = set().union(*all_columns_per_page)  # All unique columns
-    common_columns = set.intersection(*all_columns_per_page)  # Only columns that appear on every page
-
-    return all_columns
-
 async def extract_reviews_from_page(session, url, all_columns):
     """Extracts review data dynamically from a single page, fixing star ratings & overall rating."""
     html = await fetch_page(session, url)
@@ -49,7 +52,7 @@ async def extract_reviews_from_page(session, url, all_columns):
     # Find all reviews on the page
     review_sections = soup.find_all("article", itemprop="review")
 
-    for review in review_sections: # Extract data for each review
+    for review in review_sections:
         review_data = {col: None for col in all_columns}  # Initialize all values as None
 
         # Extract reviewer ID
@@ -64,7 +67,7 @@ async def extract_reviews_from_page(session, url, all_columns):
         else:
             review_id = None  # If no div with ID is found
 
-        review_data["Reviewer ID"] = review_id  # Store in dictionary
+        review_data["Review ID"] = review_id  # Store in dictionary
 
         
         # Extract review title
@@ -83,7 +86,7 @@ async def extract_reviews_from_page(session, url, all_columns):
         rating_container = review.find("div", itemprop="reviewRating")  # Locate overall rating container
         review_data["Overall Rating"] = rating_container.get_text(strip=True).split("/")[0] if rating_container else None
  
-        # Extract Star Ratings
+        # ✅ Fix: Extract Star Ratings correctly
         for row in review.find_all("tr"):
             key_tag = row.find("td")  # First <td> contains column name
             value_tag = row.find("td", class_="review-value") or row.find("td", class_="stars")
@@ -93,7 +96,7 @@ async def extract_reviews_from_page(session, url, all_columns):
 
                 if value_tag:
                     if "stars" in value_tag.get("class", []):  # If it's a star rating column
-                        stars_filled = len(value_tag.find_all("span", class_="star fill"))  # Count filled stars
+                        stars_filled = len(value_tag.find_all("span", class_="star fill"))  # Count filled stars ⭐
                         review_data[key] = stars_filled  # Assign numerical value (e.g., 4 stars → 4)
                     else:
                         review_data[key] = value_tag.get_text(strip=True)  # Assign text value
@@ -102,20 +105,38 @@ async def extract_reviews_from_page(session, url, all_columns):
 
     return reviews_data
 
-async def scrape_all_reviews(total_pages=393):
-    """Extracts all reviews dynamically and creates a structured DataFrame."""
+async def scrape_all_reviews(type='airline',airline='British Airways'):
+    """Extracts all reviews dynamically and creates a structured DataFrame.
     
+    :param type: Type of reviews to extract ('seat','lounge','airline').
+    :param airline: Airline name to extract reviews for.
+
+    :return: Structured DataFrame containing all reviews.
+    """
+
+    BASE_URL = "https://www.airlinequality.com/{type}/{airline}/page/{{}}/".format(type=type.lower()+"-reviews",
+                                                                                   airline=airline.replace(" ","-").lower())
+
+    #fetching number of pages to scrape
+    async with aiohttp.ClientSession() as session:
+        response = await session.get(BASE_URL.format(1))
+        html = await response.text()
+        soup = bs(html, "html.parser")
+        nav = soup.find("span", itemprop="reviewCount")
+        total_pages = math.ceil(int(nav.get_text(strip=True).split()[0])/10)
+    
+    print(f"Extracting {type} reviews of {airline} from {total_pages} pages...")
+
     # Step 1: Extract all unique column names dynamically
-    all_columns = await extract_all_column_names(total_pages)
+    all_columns = set().union(*await async_fetch_all_pages(extract_column_names_from_page, BASE_URL, total_pages))
 
     # Add fixed columns that will always be present
-    all_columns.update(["Reviewer ID", "Review Title", "Review Meta", "Review Content", "Overall Rating"])
+    all_columns.update(["Review ID", "Review Title", "Review Meta", "Review Content", "Overall Rating"])
 
-    async with aiohttp.ClientSession() as session:
-        tasks = [extract_reviews_from_page(session, BASE_URL.format(i), all_columns) for i in range(1, total_pages + 1)]
-        all_reviews = await asyncio.gather(*tasks)  # Run all page extractions concurrently
-
-    # Flatten the list (since gather returns a list of lists)
+    # Step 2: Extract all reviews from all pages
+    all_reviews = await async_fetch_all_pages(extract_reviews_from_page, BASE_URL, total_pages, all_columns)
+    
+    # Flatten the list
     all_reviews_flat = [review for page_reviews in all_reviews for review in page_reviews]
 
     # Convert to Pandas DataFrame
@@ -123,9 +144,31 @@ async def scrape_all_reviews(total_pages=393):
 
     return df
 
-# Example usage: Scrape all reviews dynamically
-df_reviews = asyncio.run(scrape_all_reviews(393))
+async def main():
+    """Runs all scrapers in a single event loop."""
+    start_time = time.time()
 
-# Display the DataFrame
-print(df_reviews.info())
-print(df_reviews.head())
+    # Scrape reviews concurrently
+    lounge_reviews, seat_reviews, airline_reviews = await asyncio.gather(
+        scrape_all_reviews('lounge', 'British Airways'),
+        scrape_all_reviews('seat', 'British Airways'),
+        scrape_all_reviews('airline', 'British Airways')
+    )
+
+    # ✅ Print DataFrames before saving
+    print("\n Airline Reviews:")
+    print(airline_reviews.head())
+
+    print("\n Seat Reviews:")
+    print(seat_reviews.head())
+
+    print("\n Lounge Reviews:")
+    print(lounge_reviews.head())
+
+    print(f"\n Total time taken: {time.time() - start_time:.2f} seconds")
+
+# Run the main function
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
