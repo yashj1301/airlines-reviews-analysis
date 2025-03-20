@@ -13,11 +13,11 @@ The goal is to perform sentiment analysis to understand customer experiences and
 </p>
 
 **🛠️ Tech Stack & Tools**
-1. Web Scraping: BeautifulSoup (bs4), requests
+1. Web Scraping: BeautifulSoup (bs4), aiohttp, asyncio (both for asynchronous requests handling)
 2. Data Handling: Pandas, NumPy, Polars (TBD)
 3. Sentiment Analysis: TextBlob / VADER (TBD)
 4. Data Storage: CSV (for now, database integration planned)
-Visualization: Power BI / Python Dash / Looker (TBD)
+5. Visualization: Power BI / Python Dash / Looker (TBD)
 
 **Current Status**<br>
-Scraping module is ready. Figuring out a way to optimize the scraping process, and make it more dynamic. Transformation due to start. 
+Scraping module is functional. Currently building Scraping class to apply OOP principles and facilitate reusability. 
