@@ -1,240 +1,187 @@
-import requests
-from bs4 import BeautifulSoup as bscraper
+import aiohttp
+import asyncio
 import pandas as pd
+from bs4 import BeautifulSoup as bs
+import math
 import time
 
 
-class ReviewScraper:
+class AirlineReviewScraper:
 
-    def __init__(self, base_url):
+    def __init__(self, airline_name):
         """
         Initialize the ReviewScraper with the base URL, an empty DataFrame,
         and an empty class-level attribute for bs4 object.
         Args:
-            base_url (str): The base URL of the review website.
+            airline_name (str): Name of the airline to scrape reviews for.
+            review_type (str): Type of reviews to scrape ('seat', 'lounge', 'airline','all').
         """
-        self.base_url = base_url
-        self.data = pd.DataFrame()
-        self.soup = None  # Class-level attribute for BeautifulSoup object
-
-    def fetch_html(self, url):
-        """
-        Fetch the HTML content of a given URL and initialize the soup object.
-        Args:
-            url (str): The URL to fetch.
-        Returns:
-            str: The HTML content of the page.
-        """
-        try:
-            print(f"Fetching URL: {url}")
-            response = requests.get(url)
-            response.raise_for_status()  # Raise an error for bad responses
-            self.soup = bscraper(response.text, 'html.parser')  # Initialize soup
-            return response.text
-        except requests.exceptions.RequestException as e:
-            print(f"Error fetching URL {url}: {e}")
-            self.soup = None
-            return None
-
-    def extract_review_data(self, tag, attr, value):
-        """
-        Extract specific review data (categorical or star ratings) from the soup object.
-        Args:
-            tag (str): HTML tag to search for.
-            attr (str): Attribute to locate the header within the review-stats section.
-            value (str): Class name or type of value to extract (e.g., "stars").
-        Returns:
-            tuple: Column name and list of values.
-        """
-        if not self.soup:
-            print("Soup object not initialized.")
-            return None, []
-
-        try:
-            review_stats = self.soup.find_all("div", "review-stats")  # Limit search to review-stats section
-            data = []
-            column_name = None
-
-            for code in review_stats:
-                for table in code.find_all("table", "review-ratings"):  # Look inside review-ratings table
-                    header = table.find(tag, attr)
-
-                    if header:
-                        column_name = header.get_text(strip=True)  # Extract column name
-                        if value == "stars":
-                            # Extract star ratings
-                            stars_td = header.find_next("td", "stars")
-                            if stars_td:
-                                last_star_fill = (
-                                    stars_td.find_all("span", "star fill")[-1]
-                                    if stars_td.find_all("span", "star fill")
-                                    else None
-                                )
-                                data.append(
-                                    int(last_star_fill.get_text())
-                                ) if last_star_fill else data.append(None)
-                            else:
-                                data.append(None)  # Default value if stars are not found
-                        else:
-                            # Extract normal categorical columns
-                            next_td = header.find_next(tag, value)
-                            data.append(next_td.get_text(strip=True) if next_td else None)
-                    else:
-                        data.append(None)  # Default value if header is not found
-
-            return column_name, data
+        self.airline_name = airline_name
         
-        except Exception as e:
-            print(f"Error extracting review data: {e}")
-            return None, []
+        # variables to store each type of review
+        self.airline_reviews = None
+        self.seat_reviews = None
+        self.lounge_reviews = None
 
-    def parse_reviews(self):
+    async def fetch_page(self,session, url):
+        """Fetches a single webpage asynchronously."""
+        async with session.get(url) as response:
+            return await response.text()
+
+    async def fetch_all_pages(self,fetch_function, BASE_URL, total_pages, *args):
         """
-        Parse reviews and associated metadata from the soup object.
-        Returns:
-            pd.DataFrame: DataFrame containing extracted reviews and metadata.
-        """
-        if not self.soup:
-            print("Soup object not initialized.")
-            return pd.DataFrame()
+        Generic function to fetch data asynchronously from multiple pages.
         
-        try:
-            # Extract primary review data            
-            review_id = [review_div['id'] for review_div in self.soup.find_all('div', class_='body') if 'id' in review_div.attrs]
-            review_header = [header.get_text(strip=True) for header in self.soup.find_all("h2", "text_header")]
-            review_meta = [meta.get_text(strip=True) for meta in self.soup.find_all("h3", "text_sub_header userStatusWrapper")]
-            reviews = [text.get_text(strip=True) for text in self.soup.find_all("div", "text_content")]
-            rating_value = [
-                int(rate.get_text(strip=True).split('/')[0])
-                if rate.find_all("span", itemprop="ratingValue") else None
-                for rate in self.soup.find_all("div", "rating-10")
-            ][1:]
+        :param fetch_function: Function to call (either extract_columns or extract_reviews).
+        :param BASE_URL: The URL template for requests.
+        :param total_pages: Number of pages to scrape.
+        :param args: Additional arguments required by the fetch function.
+        """
+        async with aiohttp.ClientSession() as session:
+            tasks = [fetch_function(session, BASE_URL.format(i), *args) for i in range(1, total_pages + 1)]
+            results = await asyncio.gather(*tasks)  # Fetch all pages concurrently
 
-            # Extract additional metadata
-            aircraft, val_air = self.extract_review_data("td", "aircraft", "review-value")
-            route, val_route = self.extract_review_data("td", "route", "review-value")
-            travel, val_travel = self.extract_review_data("td", "type_of_traveller", "review-value")
-            seat, val_seat = self.extract_review_data("td", "cabin_flown", "review-value")
-            date_flown, val_date = self.extract_review_data("td", "date_flown", "review-value")
-            recommended, val_recommend = self.extract_review_data("td", "recommended", "review-value")
+        return results
 
-            # Extract star rating columns
-            seat_comfort, val_seat_comf = self.extract_review_data("td", "seat_comfort", "stars")
-            cabin, val_cabin = self.extract_review_data("td", "cabin_staff_service", "stars")
-            food, val_food = self.extract_review_data("td", "food_and_beverages", "stars")
-            inflight, val_inflight = self.extract_review_data("td", "inflight_entertainment", "stars")
-            ground_service, val_ground_service = self.extract_review_data("td", "ground_service", "stars")
-            wifi_conn, val_wifi = self.extract_review_data("td", "wifi_and_connectivity", "stars")
-            value_money, val_value_money = self.extract_review_data("td", "value_for_money", "stars")
+    async def extract_headers(self,session, url):
+        """Extracts column names from a single page."""
+        html = await self.fetch_page(session, url)
+        soup = bs(html, "html.parser")
 
-            #Create a DataFrame
-            df = pd.DataFrame({
-                'Review ID': review_id,
-                'Review Title': review_header,
-                'Review Meta': review_meta,
-                'Reviews': reviews,
-                aircraft: val_air,
-                route: val_route,
-                travel: val_travel,
-                seat: val_seat,
-                date_flown: val_date,
-                'Overall Rating': rating_value,
-                seat_comfort: val_seat_comf,
-                cabin: val_cabin,
-                food: val_food,
-                inflight: val_inflight,
-                ground_service: val_ground_service,
-                wifi_conn: val_wifi,
-                value_money: val_value_money,
-                recommended: val_recommend
-            })
+        columns = set()  # Store unique column names for this page
+        review_sections = soup.find_all("div", class_="body")  # Find all reviews
 
-            return df
+        for review in review_sections:
+            for row in review.find_all("tr"):  # Extract column names dynamically
+                key_tag = row.find("td")  # First <td> contains column name
+                if key_tag:
+                    column_name = key_tag.get_text(strip=True)
+                    columns.add(column_name)  # Add to the set
 
-            '''# Debug: Print lengths of all extracted lists
-            print("Lengths of extracted data:")
-            print(f"Review Title: {len(review_header)}")
-            print(f"Review Meta: {len(review_meta)}")
-            print(f"Reviews: {len(reviews)}")
-            print(f"Overall Rating: {len(rating_value)}")
-            print(f"Aircraft: {len(val_air)}")
-            print(f"Route: {len(val_route)}")
-            print(f"Travel Type: {len(val_travel)}")
-            print(f"Seat: {len(val_seat)}")
-            print(f"Date Flown: {len(val_date)}")
-            print(f"Recommended: {len(val_recommend)}")
-            print(f"Seat Comfort: {len(val_seat_comf)}")
-            print(f"Cabin: {len(val_cabin)}")
-            print(f"Food: {len(val_food)}")
-            print(f"Inflight: {len(val_inflight)}")
-            print(f"Ground Service: {len(val_ground_service)}")
-            print(f"WiFi Connectivity: {len(val_wifi)}")
-            print(f"Value for Money: {len(val_value_money)}")
+        return columns
 
-            return pd.DataFrame'''
+    async def extract_reviews(self,session, url, all_columns):
+        """Extracts review data dynamically from a single page."""
+        html = await self.fetch_page(session, url)
+        soup = bs(html, "html.parser")
+
+        reviews_data = []  # Store structured review data
+
+        # Find all reviews on the page
+        review_sections = soup.find_all("article", itemprop="review")
+
+        for review in review_sections:
+            review_data = {col: None for col in all_columns}  # Initialize all values as None
+
+            # Extract reviewer ID
+            reviewer_div = review.find("div", id=True)  # Find the div that has an ID
+
+            if reviewer_div:  # Ensure div exists
+                review_id = reviewer_div.get("id")  # Extract the ID
+                if review_id and review_id.startswith("anchor"):  # Check if it starts with 'anchor'
+                    review_id = review_id.replace("anchor", "")  # Remove 'anchor' prefix
+                else:
+                    review_id = None  # If ID exists but is not formatted correctly
+            else:
+                review_id = None  # If no div with ID is found
+
+            review_data["Review ID"] = review_id  # Store in dictionary
+
             
-        except Exception as e:
-            print(f"Error parsing reviews: {e}")
-            return pd.DataFrame()
+            # Extract review title
+            title_tag = review.find("h2", class_="text_header")
+            review_data["Review Title"] = title_tag.get_text(strip=True) if title_tag else None
 
-    def get_total_pages(self):
-        """
-        Extract the total number of pages from the soup object.
-        Returns:
-            int: Total number of pages.
-        """
-        if not self.soup:
-            print("Soup object not initialized.")
-            return 1
+            # Extract review metadata (author, date, etc.)
+            meta_tag = review.find("h3", class_="text_sub_header userStatusWrapper")
+            review_data["Review Meta"] = meta_tag.get_text(strip=True) if meta_tag else None
+
+            # Extract review content
+            content_tag = review.find("div", class_="text_content")
+            review_data["Review Content"] = content_tag.get_text(strip=True) if content_tag else None
+
+            # Extract overall rating
+            rating_container = review.find("div", itemprop="reviewRating")  # Locate overall rating container
+            review_data["Overall Rating"] = rating_container.get_text(strip=True).split("/")[0] if rating_container else None
+    
+            # Extract Star Ratings
+            for row in review.find_all("tr"):
+                key_tag = row.find("td")  # First <td> contains column name
+                value_tag = row.find("td", class_="review-value") or row.find("td", class_="stars")
+
+                if key_tag:
+                    key = key_tag.get_text(strip=True)  # Parameter name
+
+                    if value_tag:
+                        if "stars" in value_tag.get("class", []):  # If it's a star rating column
+                            stars_filled = len(value_tag.find_all("span", class_="star fill"))  # Count filled stars ⭐
+                            review_data[key] = stars_filled  # Assign numerical value (e.g., 4 stars → 4)
+                        else:
+                            review_data[key] = value_tag.get_text(strip=True)  # Assign text value
+
+            reviews_data.append(review_data)  # Store review data
+
+        return reviews_data
+    
+    async def scrape_all_reviews(self, review_type):
+        """Extracts all reviews dynamically and creates a structured DataFrame.
         
-        try:
-            nav = self.soup.find_all('article', 'comp comp_reviews-pagination querylist-pagination position-')
-            total_pages = [
-                int(page.find_all("a", attrs={'href': True, 'class': False})[-2].get_text())
-                for page in nav
-            ][0]
-            return total_pages
-        except (IndexError, ValueError) as e:
-            print(f"Error extracting total pages: {e}. Defaulting to 1.")
-            return 1
+        :param type: Type of reviews to extract ('all', 'seat','lounge','airline').
 
-    def scrape_all_reviews(self, start_page=1, end_page=None):
+        :return: Structured DataFrame containing all reviews.
         """
-        Scrape reviews across specified or all pages, recording time taken for each page.
+
+        BASE_URL = "https://www.airlinequality.com/{type}/{airline}/page/{{}}/".format(type=review_type.lower()+"-reviews",
+                                                                                   airline=self.airline_name.replace(" ","-").lower())
+ 
+        #fetching number of pages to scrape
+        async with aiohttp.ClientSession() as session:
+            response = await session.get(BASE_URL.format(1))
+            html = await response.text()
+            soup = bs(html, "html.parser")
+            nav = soup.find("span", itemprop="reviewCount")
+            total_pages = math.ceil(int(nav.get_text(strip=True).split()[0])/10)
+        
+        print(f"Extracting {review_type} reviews of {self.airline_name} from {total_pages} pages...")
+
+        # Step 1: Extract all unique column names dynamically
+        all_columns = set().union(*await self.fetch_all_pages(self.extract_headers, BASE_URL, total_pages))
+
+        # Add fixed columns that will always be present
+        all_columns.update(["Review ID", "Review Title", "Review Meta", "Review Content", "Overall Rating"])
+
+        # Step 2: Extract all reviews from all pages
+        all_reviews = await self.fetch_all_pages(self.extract_reviews, BASE_URL, total_pages, all_columns)
+        
+        # Flatten the list
+        all_reviews_flat = [review for page_reviews in all_reviews for review in page_reviews]
+
+        #print confirmation
+        print(f"Extracted {len(all_reviews_flat)} {review_type} reviews for {self.airline_name}.")
+
+        # Convert to Pandas DataFrame
+        df = pd.DataFrame(all_reviews_flat)
+
+        return df
+    
+    async def extract_all_reviews(self, review_type):
+        """
+        Main function to extract reviews based on the review type.
+
         Args:
-            pages (int, optional): Number of pages to scrape. Defaults to all pages.
-        Returns:
-            pd.DataFrame: Combined DataFrame of all reviews.
+            type(str): Review Type to extract -> ['all','airline','seat','lounge']
+        
+        :return: DataFrame containing the extracted reviews.
         """
 
-        #checking if first page can be fetched; if not, no need to proceed.
-        first_page_html = self.fetch_html(self.base_url)
-        if not first_page_html:
-            return pd.DataFrame()
-
-        #get total pages (overall) and pages to scrape
-        total_pages = self.get_total_pages()
-        pages_to_scrape = end_page if end_page else total_pages
-        print(f"Scraping {pages_to_scrape-start_page+1} pages out of {total_pages} total pages.")
-
-        #extraction starts here
-        all_data = []
-        for page_number in range(start_page, pages_to_scrape + 1):
-            url = f"{self.base_url}/page/{page_number}"
-            print(f"Scraping page {page_number}...")
-
-            try:
-                start_time = time.time()
-                self.fetch_html(url)  # Fetch and parse the page
-                page_data = self.parse_reviews()
-                if not page_data.empty:
-                    all_data.append(page_data)
-                end_time = time.time()
-                duration = round(end_time - start_time, 2)
-                print(f"Scraped page {page_number} ({duration}s)")
-            except Exception as e:
-                print(f"Error scraping page {page_number}: {e}")
-                continue
-
-        self.data = pd.concat(all_data, ignore_index=True)
-        return self.data
+        if review_type=="all":
+            self.airline_reviews, self.seat_reviews, self.lounge_reviews = \
+            await asyncio.gather(
+                self.scrape_all_reviews('airline'),
+                self.scrape_all_reviews('seat'),
+                self.scrape_all_reviews('lounge')
+                )
+            
+        elif review_type =="airline": self.airline_reviews = await self.scrape_all_reviews('airline')
+        elif review_type =="seat":    self.seat_reviews = await self.scrape_all_reviews('seat')
+        elif review_type =="lounge":  self.lounge_reviews = await self.scrape_all_reviews('lounge')

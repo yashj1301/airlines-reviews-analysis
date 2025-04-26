@@ -1,0 +1,21 @@
+#Environment variables
+.env
+
+# Python cache
+**/__pycache__/
+*.py[cod]
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# VS Code workspace
+.vscode/
+
+# OS system files
+.DS_Store
+Thumbs.db
+
+# egg files
+*.egg
+*.egg-info
+*.egg-info/
