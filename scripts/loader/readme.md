@@ -1,125 +1,156 @@
-<u><h2>Documentation for loader.py</h2></u>
+## Documentation for `loader.py`
 
-<h3>Overview</h3>
+### Overview  
+The `loader.py` module defines the **`AirlineReviewLoader`** class, which handles uploading and downloading of airline review DataFrames to and from an AWS S3 bucket. It can create the bucket on‐demand (for uploads only), serialize DataFrames to CSV in memory, and read them back into pandas.
 
-The `loader.py` script defines the **DataLoader** class, which handles incremental data loading. It is responsible for loading, saving, and appending new review data to a CSV file, ensuring that there are no duplicate records. It performs the following tasks:
+---
 
-1. Checks if an existing data file is available.
-2. Loads existing data if present.
-3. Saves new data to the file, ensuring that only new records are appended.
-4. Handles the case where the data file does not exist, creating a new file.
+### Requirements  
+- **pandas**  
+- **boto3**  
+- **python-dotenv**  
+- **botocore** (for `ClientError`)  
+- **io** (standard library)  
+- **os** (standard library)  
 
-<h3>Requirements</h3> 
+Make sure to have a `.env` file (git-ignored) with the AWS credentials and region, and call `load_dotenv()` at the top of the script.
 
-The following Python libraries are required:
-- `pandas`: For data manipulation and reading/writing CSV files.
-- `os`: For checking file existence.
+---
 
-<h3>Class Definition</h3>
-class DataLoader: The class encapsulates the logic for loading and saving review data.
+### Class Definition  
+```python
+class AirlineReviewLoader:
+    def __init__(self, airline_name: str, data_type: str = "raw"): …
+    def ensure_bucket_exists(self, bucket_name: str, flag: int = 0): …
+    def upload_df(self, bucket_name: str, object_key: str, df: pd.DataFrame): …
+    def download_df(self, bucket_name: str, review_type: str) -> Optional[pd.DataFrame]: …
+    def load_data(self, bucket_name: str, load_type: str, review_type: str = "all"): …
+```
 
-<h4>1. Class Constructor</h4>
+#### 1. Constructor
 
-    def __init__(self, file_path):
+```python
+def __init__(self, airline_name: str, data_type: str = "raw"):
     """
-    Initializes the DataLoader with the file path to save/load data.
     Args:
-    file_path (str): The path to the CSV file where data will be saved.
+      airline_name: Name of the airline (e.g. "British Airways").
+      data_type:   "raw" or "tf" (transformed).
+    
+    Outcomes:
+      - Normalizes airline_name (kept as-is for display).
+      - Initializes placeholders:
+          self.airline_reviews,
+          self.seat_reviews,
+          self.lounge_reviews = None
     """
+```
+
+#### 2. `ensure_bucket_exists(self, bucket_name, flag=0)`
+
+```python
+def ensure_bucket_exists(self, bucket_name: str, flag: int = 0):
+    """
+    Checks if `bucket_name` exists in S3.
     
-<u>Purpose</u>: Sets up the initial state for the data loader, including file_path: Path to the CSV file for saving/loading data.
-
-<h4>2. Method: load_existing_data</h4>
-
-        def load_existing_data(self):
-        """
-        Loads existing data from the specified file if it exists.
-        Returns:
-            pd.DataFrame: Existing data (empty DataFrame if file doesn't exist).
-        """
-<u>Purpose</u>: Loads the existing data from the specified CSV file. If the file doesn't exist, it returns an empty DataFrame.
-
-<u>Logic</u>: Checks if the file exists and reads it into a DataFrame. If no file is found, an empty DataFrame is returned.
-
-<h4>3. Method: save_data</h4>
-
-    def save_data(self, data):
-        """
-        Saves the new data to the specified file, appending if the file exists.
-        Args:
-            data (pd.DataFrame): The new data to save.
-        """
-<u>Purpose</u>: Saves the new data to the CSV file, appending if the file already exists.
-
-<u>Logic</u>: If the file already contains data, it appends new data to it, ensuring no duplicates are added by using Review ID as a unique identifier.
-
-<u>Error Handling</u>: Handles cases where the file is missing by creating a new file.
-
-<h4>4. Method: incremental_load</h4>
-
-    def incremental_load(self, new_data):
-        """
-        Perform incremental load by checking for new data and appending it.
-        Args:
-            new_data (pd.DataFrame): The new data to load incrementally.
-        """
-        
-<u>Purpose</u>: Manages the incremental load of data by checking for new records and appending them to the existing dataset.
-
-<u>Logic</u>: Calls the save_data method to append the new data. The main purpose of this method is to ensure that only new data is added during incremental scraping sessions.
-
-<h3> How to Use the <code>DataLoader</code> Class </h3> 
-
-<ol> 
-<li><b>Initialize the DataLoader:</b></li>
-
-    file_path = "scraped_reviews.csv"
-    loader = DataLoader(file_path)
-
-<li><b>Load Existing Data (if any):</b></li> 
-
-<ol type=I> 
-<li>Load all existing data from the file:</li>
-
-        existing_data = loader.load_existing_data()
-        print(existing_data.head())
-
-<li>Incremental Loading of New Data:</li> 
-
-<ol type=a> 
-<li>After scraping new data, perform incremental loading:</li>
+    Args:
+      bucket_name: the S3 bucket name.
+      flag: 1 to create the bucket if missing; 0 to only check.
     
-    loader.incremental_load(new_data)
-</ol> 
-</ol>
+    Outcomes:
+      - Prints existence status.
+      - If not found and flag==1, creates the bucket in AWS_DEFAULT_REGION.
+    """
+```
+This is the first step in the loading of data. It checks the existence of the bucket, and if not found (error 404), it will create bucket. 
+Bucket creation is conditional - only if upload function is implemented (decided by flag=1), then the bucket will be created. 
 
-<b>Example:</b>
+#### 3. `upload_df(self, bucket_name, object_key, df)`
 
-<code>
+```python
+def upload_df(self, bucket_name: str, object_key: str, df: pd.DataFrame):
+    """
+    Uploads a DataFrame as CSV to S3.
+    
+    Args:
+      bucket_name: the S3 bucket.
+      object_key:  path/key inside the bucket.
+      df:          the DataFrame to upload.
+    
+    Outcomes:
+      - Skips if df is None or empty.
+      - Converts df to CSV in a StringIO buffer and calls s3.put_object().
+      - Prints the S3 URL on success.
+    """
+```
 
-import pandas as pd
-from loader import DataLoader
+This function is a standalone function simply used to upload a dataframe (`df`) to the path (`object key`) inside a S3 Bucket. 
 
-<raw style="color:green"> # Create the DataLoader object </raw>
-file_path = "scraped_reviews.csv"
-loader = DataLoader(file_path)
+#### 4. `download_df(self, bucket_name, review_type)`
 
-<raw style="color:green"> # Simulate new data scraped </raw>
-new_data = pd.DataFrame({
-    'Review ID': [101, 102, 103],
-    'Review Title': ['Great flight', 'Comfortable seats', 'Good service'],
-    'Review Meta': ['USA', 'UK', 'Canada'],
-    'Reviews': ['Excellent experience', 'Very comfortable', 'Nice crew'],
-    # Add more columns as necessary
-})
+```python
+def download_df(self, bucket_name: str, review_type: str) -> Optional[pd.DataFrame]:
+    """
+    Downloads a CSV from S3 into a DataFrame.
+    
+    Args:
+      bucket_name: the S3 bucket.
+      review_type: one of "airline","seat","lounge".
+    
+    Returns:
+      pd.DataFrame on success; None on error.
+    
+    Outcomes:
+      - Prints the S3 URL on success.
+      - Prints an error and returns None if download fails.
+    """
+```
 
-<raw style="color:green"> # Perform incremental load</raw>
-loader.incremental_load(new_data)
+This function is used to download a dataframe from an S3 bucket. It simply uses the `bucket name`, `review type` and `data type` to construct the object key, and downloads the required dataframe to a variable. 
 
-</code>
+#### 5. `load_data(self, bucket_name, load_type, review_type="all")`
 
-<i><b>Additional Notes:</b></i>
+```python
+def load_data(self, bucket_name: str, load_type: str, review_type: str = "all"):
+    """
+    Top-level method to upload/download one or all review types.
 
-1. <u>Error Handling</u>: The script handles missing files by creating a new one. It also prevents duplicates by checking the Review ID.
-2. <u>Scalability</u>: This script is flexible and can scale with larger datasets as it uses pandas to efficiently append data and handle large volumes.
-3. <u>Data Integrity</u>: The use of a primary key (Review ID) ensures that data integrity is maintained across incremental loading.
+    Args:
+      bucket_name:  the S3 bucket.
+      load_type:    "upload" or "download".
+      review_type:  "all", "airline", "seat", or "lounge".
+    
+    Behavior:
+      - Validates arguments.
+      - On upload:
+          - Calls ensure_bucket_exists(flag=1)
+          - Iterates through each non-None DataFrame attribute,
+            prints progress, and uploads via upload_df().
+      - On download:
+          - Calls ensure_bucket_exists(flag=0)
+          - Iterates through requested types,
+            downloads via download_df(), and assigns to attributes.
+      - Prints summary on completion.
+    """
+```
+
+This is the top-level function which will be used to trigger the uploading / downloading (using argument `load_type`) of data from S3. 
+
+### Usage Example 
+
+```python
+from loader import AirlineReviewLoader
+
+# 1. Prepare loader for raw data upload
+loader = AirlineReviewLoader("British Airways", data_type="raw")
+loader.airline_reviews = df_airline
+loader.seat_reviews    = df_seat
+loader.lounge_reviews  = df_lounge
+
+# 2. Upload all raw reviews
+loader.load_data(bucket_name="airline-reviews", load_type="upload", review_type="all")
+
+# 3. Later, download back into memory
+loader = AirlineReviewLoader("British Airways", data_type="raw")
+loader.load_data(bucket_name="airline-reviews", load_type="download", review_type="all")
+print(loader.lounge_reviews.head())
+```

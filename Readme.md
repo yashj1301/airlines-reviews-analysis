@@ -1,23 +1,38 @@
-<h3><u> British Airways Customer Reviews Sentiment Analysis </u></h3>
-This project focuses on scraping, transforming, and analyzing customer reviews from British Airways using BeautifulSoup, from the website Skytrax. 
-The goal is to perform sentiment analysis to understand customer experiences and opinions based on their feedback.<br><br>
+# Project – Airline Reviews Analysis
 
-<p>
-<b>🎯 Objectives</b>
-  
-1. Extract customer reviews from the website dynamically
-2. Perform data cleaning and transformation for meaningful insights
-3. Apply sentiment analysis to classify reviews as positive, neutral, or negative
-4. Optimize scraping efficiency and implement incremental data loading
-5. Visualize insights in a dashboard
-</p>
+## Overview  
+This project scrapes customer reviews from Skytrax, transforms and loads them into AWS S3, and ultimately drives a dashboard to analyze passenger feedback. It uses asynchronous requests to maximize scraping throughput and pandas/NumPy for data cleanup.
 
-**🛠️ Tech Stack & Tools**
-1. Web Scraping: BeautifulSoup (bs4), aiohttp, asyncio (both for asynchronous requests handling)
-2. Data Handling: Pandas, NumPy, Polars (TBD)
-3. Sentiment Analysis: TextBlob / VADER (TBD)
-4. Data Storage: CSV (for now, database integration planned)
-5. Visualization: Power BI / Python Dash / Looker (TBD)
+---
 
-**Current Status**<br>
-Scraping module is functional. Currently building Scraping class to apply OOP principles and facilitate reusability. 
+## Objectives 🎯  
+1. **Extract** customer reviews dynamically (airline, seat, lounge)  
+2. **Clean & transform** the raw HTML into structured tabular data  
+3. **Analyze** sentiment, keywords, and rating trends (TBD)  
+4. **Visualize** the results in Power BI / Looker / Tableau (TBD)  
+
+---
+
+## Tech Stack & Tools 🛠️  
+- **Web Scraping**: `aiohttp`, `asyncio`, `beautifulsoup4`  
+- **Data Handling**: `pandas`, `numpy`  
+- **Storage**: AWS S3 (`boto3`, `python-dotenv`)  
+- **CI/CD & Orchestration**: GitHub Actions, AWS MWAA (Airflow) (TBI)
+- **Visualization**: Power BI / Looker / Tableau (TBD)  
+
+---
+
+## Current Status 🚧  
+- ✅ Scraper module: extracts and saves raw review tables  
+- ✅ Loader module: uploads raw CSVs to S3; downloads on demand  
+- 🛠 Transformer module: **in progress**  
+- 🛠 End-to-end CI/CD + Airflow DAG: **TBI**  
+
+---
+
+## Next Steps  
+- Prepare the transformer module. 
+- install all modules as packages using a `setup.py` file. 
+- prepare driver scripts in a new `/tests/` folder. 
+
+Once the above 3 are completed, we will be finished with the __Pre-Containerization Phase__. 
