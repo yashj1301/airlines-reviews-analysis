@@ -1,145 +1,188 @@
-<u><h2>Documentation for `scraper.py`</h2></u>
+## Documentation for `scraper.py`
 
-<h3>Overview</h3>
+### Overview  
+The `scraper.py` module defines the **`AirlineReviewScraper`** class, which asynchronously fetches and parses customer reviews from Skytrax by airline, seat, and lounge categories. 
 
-The `scraper.py` script defines the "ReviewScraper" class, which is used to scrape customer reviews from a website. It handles:
+It uses `aiohttp` for concurrent HTTP requests and `BeautifulSoup` to extract both review metadata and detailed star-rating tables, returning each dataset as a pandas DataFrame.
 
-1. Fetching HTML content from specified URLs.
-2. Parsing customer review data, including metadata and star ratings.
-3. Handling errors and incomplete data gracefully.
-4. Combining the scraped data into a well-structured pandas DataFrame.
+---
 
-<h3>Requirements</h3>
-The following Python libraries are required:
+### Requirements  
+- **aiohttp**  
+- **asyncio** (standard library)  
+- **pandas**  
+- **beautifulsoup4**  
+- **math** (standard library)  
+- **time** (standard library)  
 
-1. `requests`: For sending HTTP requests to fetch webpage content.
-2. `BeautifulSoup` from bs4: For parsing and navigating HTML content.
-3. `pandas`: For structuring and manipulating tabular data.
-4. `time`: For recording the time taken for operations.
+---
 
-<h3>Class Definition</h3>
+### Class Definition  
+```python
+class AirlineReviewScraper:
+    def __init__(self, airline_name: str): …
+    async def fetch_page(self, session, url: str) -> str: …
+    async def fetch_all_pages(self, fetch_function, BASE_URL: str, total_pages: int, *args) -> list: …
+    async def extract_headers(self, session, url: str) -> set: …
+    async def extract_reviews(self, session, url: str, all_columns: set) -> list: …
+    async def scrape_all_reviews(self, review_type: str) -> pd.DataFrame: …
+    async def extract_all_reviews(self, review_type: str) -> None: …
+```
 
-class `ReviewScraper`: The class encapsulates all functionality for scraping and processing customer reviews.
+#### 1. Constructor
 
-<b>1. Class Constructor</b>
+```python
+def __init__(self, airline_name: str):
+    """
+    Initializes the scraper.
+    - Stores `airline_name`.
+    - Prepares placeholders: `airline_reviews`, `seat_reviews`, `lounge_reviews`.
+    """
+```
 
-        def __init__(self, base_url):
-        """
-        Initialize the ReviewScraper with the base URL and an empty DataFrame.
-        Args:
-        base_url (str): The base URL of the review website.
-        """
+#### 2. `fetch_page(self, session, url)`
 
-<u>Purpose</u>: Sets up the initial state for the scraper, including:<ul>
-    <li> base_url: Base URL of the review site.
-    <li>data: Placeholder for the final scraped DataFrame.
-    <li>soup: A BeautifulSoup object for HTML parsing, initially None.</ul>
+```python
+async def fetch_page(self, session, url: str) -> str:
+    """
+    Performs a single HTTP GET asynchronously and returns HTML text.
+    """
+```
 
-**2. Method: fetch_html**
+__Parameters__
 
-        def fetch_html(self, url):
-            """
-            Fetch the HTML content of a given URL and initialize the soup object.
-            Args:
-                url (str): The URL to fetch.
-            Returns:
-                str: The HTML content of the page.
-            """
-<u>Purpose</u>: Fetches the HTML content of a given URL and initializes the soup object for parsing.
+- `session`: an `aiohttp.ClientSession` instance.
+- `url (str)`: the page URL to fetch.
 
-<u>Error Handling</u>: If the request fails (e.g., network issue or server error), it logs the error and sets soup to None.
+__Returns__
 
-**3. Method: extract_review_data**
+- `str`: raw HTML of the page.
 
-        def extract_review_data(self, tag, attr, value):
-            """
-            Extract specific review data (categorical or star ratings) from the soup object.
-            Args:
-                tag (str): HTML tag to search for.
-                attr (str): Attribute to locate the header within the review-stats section.
-                value (str): Class name or type of value to extract (e.g., "stars").
-            Returns:
-                tuple: Column name and list of values.
-            """
+#### 3. `fetch_all_pages(self, fetch_function, BASE_URL, total_pages, *args)`
 
-<u>Purpose</u>: Extracts specific review data, including categorical data (e.g., Aircraft, Route) and star ratings (e.g., Seat Comfort, Cabin).
-Searches within the review-stats section of the HTML to narrow the scope.
+```python
+async def fetch_all_pages(self,
+                          fetch_function,
+                          BASE_URL: str,
+                          total_pages: int,
+                          *args) -> list:
+    """
+    Runs `fetch_function` concurrently over pages 1..total_pages.
+    Uses additional arguments to implement functions with varying parameters
+    i.e. extract_headers() & extract_reviews().
+    """
+```
 
-<u>Logic</u>: Handles both normal data (value) and star ratings (stars) differently.
-Provides default values (None) for missing elements to ensure consistency.
+This function is created to run a function concurrently over each page. It is designed to handle multiple varying parameters, based on the function being called. 
 
-**4. Method: parse_reviews**
+__Parameters__
 
-        def parse_reviews(self):
-            """
-            Parse reviews and associated metadata from the soup object.
-            Returns:
-                pd.DataFrame: DataFrame containing extracted reviews and metadata.
-            """
+- `fetch_function`: an async method (extract_headers or extract_reviews).
+- `BASE_URL (str)`: URL template containing "{} for page numbers.
+- `total_pages (int)`: number of pages to fetch.
+- `*args`: extra arguments to pass into fetch_function.
 
-Purpose: Combines data from various sections of the HTML (titles, metadata, reviews, star ratings) into a structured DataFrame.
+__Returns__
 
-<u>Key Steps</u>:
+`list`: list of results from each page (sets for headers or lists for reviews)
 
-<ol type=a>
-<li> Extracts primary review data (e.g., Review Title, Review Meta, Reviews, Overall Rating).</li>
-<li>Extracts additional metadata (e.g., Aircraft, Route, Travel Type).
-<li>Extracts star ratings (e.g., Seat Comfort, Cabin, Food).
-<li>Combines all data into a pandas DataFrame.</li></ol>
+#### 4. `extract_headers(self, session, url)`
 
-<u>Error Handling</u>: Logs and returns an empty DataFrame if an error occurs during parsing.
+```python
+async def extract_headers(self, session, url: str) -> set:
+    """
+    Parses one page to collect unique table column names.
+    """
+```
 
-**5. Method: get_total_pages**
+This function is run for all pages, and the set of the headers (unique values) is used as headers in the final dataframe. 
 
-    def get_total_pages(self):
-        """
-        Extract the total number of pages from the soup object.
-        Returns:
-            int: Total number of pages.
-        """
-<u>Purpose</u>: Determines the total number of review pages from the pagination section of the HTML.
+__Parameters__
 
-<u>Error Handling</u>: Defaults to 1 page if the pagination structure is missing or incorrectly parsed.
+- `session`: an `aiohttp.ClientSession` instance.
+- `url (str)`: the page URL to fetch.
 
-**6. Method: scrape_all_reviews**
+__Returns__
 
-    def scrape_all_reviews(self, pages=None):
-        """
-        Scrape reviews across specified or all pages, recording time taken for each page.
-        Args:
-            pages (int, optional): Number of pages to scrape. Defaults to all pages.
-        Returns:
-            pd.DataFrame: Combined DataFrame of all reviews.
-        """
+- `set`: unique column names from all `<tr>` rows.
 
-<u>Purpose</u>: Orchestrates the scraping process by iterating over multiple pages.
-Combines data from all scraped pages into a single DataFrame.
+#### 5. `extract_reviews(self, session, url, all_columns)`
 
-<u>Key Steps</u>:<ol type=a>
-<li>Fetches the first page to determine the total number of pages.
-<li>Iteratively fetches and parses each page, logging time taken for each.
-<li>Appends parsed data to the data attribute.</li></ol>
+```python
+async def extract_reviews(self,
+                          session,
+                          url: str,
+                          all_columns: set) -> list:
+    """
+    Extracts row-by-row review data into dicts keyed by `all_columns`.
+    """
+```
 
-<u>Error Handling</u>: If a page fails to scrape, logs the error and continues with the next page.
+This function goes into each review, extracts its data and appends to the list which is returned through it. 
 
-<h3>How to Use the ReviewScraper Class</h3>
+__Parameters__
 
-<ol>
-<li>Initialize the Scraper:</li>
+- `session`: an `aiohttp.ClientSession` instance.
+- `url (str)`: the page URL to fetch.
+- `all_columns (set)`: full set of expected columns.
 
-        base_url = "https://www.airlinequality.com/airline-reviews/british-airways"
-        scraper = ReviewScraper(base_url)
+__Returns__
 
-<li>Scrape Reviews:
+- `list of dicts`: each dict represents one review with all columns populated or None.
 
-<ol type=a>
-<li>Scrape all pages:</li>
+#### 6. `scrape_all_reviews(self, review_type)`
 
-    all_reviews = scraper.scrape_all_reviews()
-    print(all_reviews.head())
+```python
+async def scrape_all_reviews(self, review_type: str) -> pd.DataFrame:
+    """
+    Coordinates header extraction and review scraping for `review_type`.
+    - Determines total_pages from the first page.
+    - Gathers headers, then reviews concurrently.
+    - Flattens results and returns a DataFrame.
+    """
+```
 
-<li>Scrape a limited number of pages:</li>
+This is the downstream function which is used to scrape the actual data from the website. It extracts all headers and reviews, and shapes them into a single dataframe. 
 
-    limited_reviews = scraper.scrape_all_reviews(pages=5)
-    print(limited_reviews.head())
+To make the scraping conditional, we use an additional function `extract_all_reviews()` which simply calls this function based on the review type. 
 
+__Parameters__
+
+- `review_type (str)`: "airline", "seat", or "lounge".
+
+__Returns__
+
+- `pd.DataFrame`: rows of scraped reviews with dynamic columns.
+
+#### 7. `extract_all_reviews(self, review_type)`
+
+```python
+async def extract_all_reviews(self, review_type: str) -> None:
+    """
+    Top-level entry point.
+    - If `review_type == "all"`, runs all three scrapes in parallel.
+    - Otherwise runs a single-category scrape.
+    - Populates: `self.airline_reviews`, `self.seat_reviews`, `self.lounge_reviews`.
+    """
+```
+
+This function is the top-level function used to trigger the scraping. Its argument `review_type` is used to apply condition to the scraping - only scrape the required data. It populates the class attributes `airline_reviews`, `seat_reviews` and `lounge_reviews`. 
+
+### Usage Example
+
+```python
+import time
+import asyncio
+from scripts.scraper.scraper import AirlineReviewScraper
+
+scraper = AirlineReviewScraper("British Airways")
+
+start = time.time()
+asyncio.run(scraper.extract_all_reviews("all"))
+end = time.time()
+
+print(f"Elapsed: {end-start:.2f}s")
+print(scraper.airline_reviews.head())
+print(scraper.seat_reviews.head())
+print(scraper.lounge_reviews.head())
+```
